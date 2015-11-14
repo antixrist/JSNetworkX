@@ -104,6 +104,8 @@ var d3 = global.d3;
  *   container of the visualization. A string is interpreted as CSS selector.
  * - d3 (d3): Use to explicitly pass a reference to D3. If not present, the
  *   global variable d3 will be used instead.
+ * - layout (d3.layout.force): Use this to choose an alternative layout
+ *   algorithm. If not present, d3.layout.force will be used.
  * - width (number): The width of the canvas in pixels. Defaults to the width
  *   of the container.
  * - height (number): The height of the canvas in pixels. Defaults to the
@@ -219,7 +221,7 @@ export function draw(G, config, optBind) {
     .append('g')
     .classed('nodes', true)
     .selectAll('g.node');
-  var force = d3.layout.force();
+  var force = (config.layout || d3.layout.force)();
   var width = config.width || parseInt(container.style('width'), 10);
   var height = config.height || parseInt(container.style('height'), 10);
   var layoutAttr = config.layoutAttr;
@@ -355,7 +357,7 @@ export function draw(G, config, optBind) {
   };
 
   for (let attr in layoutAttr) {
-    if (exclude[attr] !== true) {
+    if (exclude[attr] !== true && force[attr]) {
       force[attr](layoutAttr[attr]);
     }
   }
@@ -443,84 +445,114 @@ export function draw(G, config, optBind) {
     };
   }
   var labelOffset = config.edgeLabelOffset;
+  var edgeLen = config.edgeLen;
+  if (typeof edgeLen !== 'function') {
+    edgeLen = function() {
+      return config.edgeLen;
+    };
+  }
 
   if (directed) { // don't rotate labels and draw curvy lines
     updateEdgePosition = function() {
       selections.edgeSelection.each(function(d) {
-        if (d.source !== d.target) {
-          var $this = d3.select(this);
-          var x1 = d.source.x;
-          var y1 = d.source.y;
-          var x2 = d.target.x;
-          var y2 = d.target.y;
-          var angle = angleFor(x1, y1, x2, y2);
-          var dx = Math.sqrt(
-            Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)
-          );
-          var computedOffset = offset(d);
+        var selfLoop = d.source === d.target;
+        var $this = d3.select(this);
+        var x1 = d.source.x;
+        var y1 = d.source.y;
+        var x2 = d.target.x;
+        var y2 = d.target.y;
+        var angle = angleFor(x1, y1, x2, y2);
+        var dx = Math.sqrt(
+          Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)
+        ) * edgeLen(d);
+        var computedOffset = offset(d);
           computedOffset = [
-            computedOffset[0] * invScale,
-            computedOffset[1] * invScale
-          ];
+          computedOffset[0] * invScale,
+          computedOffset[1] * invScale
+        ];
 
-          $this.attr(
-            'transform',
-            ['translate(',x1,',',y1,')', 'rotate(', angle,')'].join('')
-          );
+        $this.attr(
+          'transform',
+          ['translate(',x1,',',y1,')', 'rotate(', angle,')'].join('')
+        );
 
-          var shift = strw(d) * invScale;
-          var arrowStartPoint = dx - computedOffset[1] - 2*shift;
-          var halfShift = shift / 2;
-          $this.select('.line').attr('d', [
-              'M', computedOffset[0], 0,
-              'L', computedOffset[0], -halfShift,
-              'L', arrowStartPoint, -halfShift,
-              'L', arrowStartPoint, -shift,
-              'L', dx - computedOffset[1], 0,
-              'z'
-          ].join(' '));
-
-          var edgeScale = 1/invScale;
-          $this.select('text')
-            .attr(
-              'x',
-              (labelOffset.x * edgeScale) +
-              computedOffset[0] +
-              (dx*edgeScale - computedOffset[0] - computedOffset[1]) / 2
-            )
-            .attr('y', -strw(d)/2 + -labelOffset.y * edgeScale)
-            .attr('transform', 'scale(' + invScale + ')');
+        var shift = strw(d) * invScale;
+        var arrowStartPoint = dx - computedOffset[1] - 2*shift;
+        var halfShift = shift / 2;
+        
+        if (selfLoop) {
+          $this.select('.line').attr('d',
+            d3.svg.line().interpolate('bundle')([
+              [0, -computedOffset[0]/2],
+              [0 + 20, -computedOffset[0]/2 - 45],
+              [0 - 20, -computedOffset[0]/2 - 45],
+              [0, -computedOffset[0]/2]
+            ])
+          ).style('stroke-width', strw(d) / 2 * invScale);
         }
+        else {
+          $this.select('.line').attr('d', [
+            'M', computedOffset[0], 0,
+            'L', computedOffset[0], -halfShift,
+            'L', arrowStartPoint, -halfShift,
+            'L', arrowStartPoint, -shift,
+            'L', dx - computedOffset[1], 0,
+            'z'
+          ].join(' '));
+        }
+
+        var edgeScale = 1/invScale;
+        $this.select('text')
+          .attr(
+            'x',
+            (labelOffset.x * edgeScale) +
+             computedOffset[0] +
+            (dx*edgeScale - computedOffset[0] - computedOffset[1]) / 2
+          )
+          .attr('y', -strw(d)/2 - (labelOffset.y + (selfLoop ? 40 : 0)) * edgeScale)
+          .attr('transform', 'scale(' + invScale + ')');
       });
     };
   }
   else {
     updateEdgePosition = function() {
       selections.edgeSelection.each(function(d) {
-        if (d.source !== d.target) {
-          var $this = d3.select(this);
-          var x1 = d.source.x;
-          var y1 = d.source.y;
-          var x2 = d.target.x;
-          var y2 = d.target.y;
-          var angle = angleFor(x1, y1, x2, y2);
-          var dx = Math.sqrt(
-            Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)
-          );
-          var center = dx/2;
-          var computedOffset = offset(d);
+        var selfLoop = d.source === d.target;
+        var $this = d3.select(this);
+        var x1 = d.source.x;
+        var y1 = d.source.y;
+        var x2 = d.target.x;
+        var y2 = d.target.y;
+        var angle = angleFor(x1, y1, x2, y2);
+        var dx = Math.sqrt(
+          Math.pow(x2 - x1, 2) + Math.pow(y2 - y1, 2)
+        ) * edgeLen(d);
+        var center = dx/2;
+        var computedOffset = offset(d);
           computedOffset = [
-            computedOffset[0] * invScale,
-            computedOffset[1] * invScale
-          ];
+          computedOffset[0] * invScale,
+          computedOffset[1] * invScale
+        ];
 
-          var edgeScale = 1/invScale;
-          var shift = strw(d) * invScale;
-          var flip = angle > 90 && angle < 279;
-          $this.attr('transform', [
-            'translate(',x1,',',y1,')',
-            'rotate(', angle,')'
-          ].join(''));
+        var edgeScale = 1/invScale;
+        var shift = strw(d) * invScale;
+        var flip = angle > 90 && angle < 270;
+        $this.attr('transform', [
+          'translate(',x1,',',y1,')',
+          'rotate(', angle,')'
+        ].join(''));
+        
+        if (selfLoop) {
+          $this.select('.line').attr('d',
+            d3.svg.line().interpolate('bundle')([
+              [0, -computedOffset[0]/2],
+              [0 + 20, -computedOffset[0]/2 - 45],
+              [0 - 20, -computedOffset[0]/2 - 45],
+              [0, -computedOffset[0]/2]
+            ])
+          ).style('stroke-width', strw(d) / 2 * invScale);
+        }
+        else {
           $this.select('.line').attr('d', [
             'M', computedOffset[0], shift/4,
             'L', computedOffset[0], -shift/4,
@@ -528,21 +560,21 @@ export function draw(G, config, optBind) {
             'L', dx - computedOffset[1], shift/4,
             'z'
           ].join(' '));
-          if (config.withEdgeLabels) {
-            $this.select('text')
-              .attr(
-                'x',
-                ((flip ? 1 : -1) * labelOffset.x * edgeScale) +
-                computedOffset[0] +
-                (dx*edgeScale - computedOffset[0] - computedOffset[1]) / 2
-              )
-              .attr('y', -strw(d)/4 + -labelOffset.y * edgeScale)
-              .attr(
-                'transform',
-                'scale(' + invScale + ')' +
-                (flip ? 'rotate(180,' + center * (1/invScale) +',0)' : '')
-              );
-          }
+        }
+        if (config.withEdgeLabels) {
+          $this.select('text')
+            .attr(
+              'x',
+              ((flip ? 1 : -1) * labelOffset.x * edgeScale) +
+              computedOffset[0] +
+              (dx*edgeScale - computedOffset[0] - computedOffset[1]) / 2
+            )
+            .attr('y', -strw(d)/2 - (labelOffset.y + (selfLoop ? 40 : 0)) * edgeScale)
+            .attr(
+              'transform',
+              'scale(' + invScale + ')' +
+              (flip ? 'rotate(180,' + center * (1/invScale) +',0)' : '')
+            );
         }
       });
     };
@@ -756,6 +788,12 @@ function updateEdgeAttr(selection, config, optEdges, optDirected) {
     .style(config.edgeStyle)
     .style('stroke-width', 0);
 
+  var selfloops = selection.filter(function(d) {
+    return d['source'] === d['target'];
+  }).selectAll('.line');
+  selfloops.style('fill', 'none');
+  selfloops.style('stroke', config.edgeStyle['fill']);
+
   if (config.withEdgeLabels) {
     selection.selectAll('text')
       .attr(config.edgeLabelAttr)
@@ -943,7 +981,7 @@ function bind(G, force, config, selections) {
       for (var [u, v] of ebunch) {
         if (!this.hasEdge(u, v) &&
             seenEdges.get(u) !== v &&
-            (directed || seenEdges.get(v) === u)
+            (directed || seenEdges.get(v) !== u)
         ) {
           newEdges.push([u, v]);
           seenEdges.set(u, v);
@@ -1010,7 +1048,7 @@ function bind(G, force, config, selections) {
         selections.edgeSelection
       );
 
-      force.resume();
+      force.start();
     }
     proto.removeNode.call(this, n);
   };
@@ -1039,7 +1077,7 @@ function bind(G, force, config, selections) {
       selections.edgeSelection
     );
 
-    force.resume();
+    force.start();
     proto.removeNodesFrom.call(this, nbunch);
   };
 
@@ -1051,7 +1089,7 @@ function bind(G, force, config, selections) {
       selections.edgeSelection
     );
 
-    force.resume();
+    force.start();
     proto.removeEdge.call(this, u, v);
   };
 
@@ -1064,7 +1102,7 @@ function bind(G, force, config, selections) {
       selections.edgeSelection
     );
 
-    force.resume();
+    force.start();
     proto.removeEdgesFrom.call(G, ebunch);
   };
 
@@ -1079,7 +1117,7 @@ function bind(G, force, config, selections) {
       edgeKeyFunction
     );
     selections.edgeSelection.exit().remove();
-    force.nodes([]).links([]).resume();
+    force.nodes([]).links([]).start();
     proto.clear.call(this);
   };
 
@@ -1154,6 +1192,7 @@ var DEFAULT_CONFIG = {
     fill: '#999',
     cursor: 'pointer'
   },
+  edgeLen: 1,
   edgeAttr: {},
   edgeStyle: {
     fill: '#000',
